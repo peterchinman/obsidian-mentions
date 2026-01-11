@@ -7,12 +7,117 @@ interface MentionSuggestion {
 	alias?: string;      // The alias that was matched (e.g., "Arbis")
 }
 
+interface CachedMention {
+	file: TFile;
+	basename: string;
+	aliases: string[];
+	backlinkCount: number;
+}
+
 export class MentionSuggest extends EditorSuggest<MentionSuggestion> {
 	plugin: MyPlugin;
+	private mentionCache: Map<string, CachedMention> = new Map();
+	private cacheReady: boolean = false;
 
 	constructor(plugin: MyPlugin) {
 		super(plugin.app);
 		this.plugin = plugin;
+		
+		// Build initial cache
+		this.buildCache();
+		
+		// Rebuild on file changes
+		this.plugin.registerEvent(
+			this.app.vault.on('create', (file) => {
+				if (file instanceof TFile && this.isInMentionsFolder(file)) {
+					this.buildCache();
+				}
+			})
+		);
+		
+		this.plugin.registerEvent(
+			this.app.vault.on('delete', (file) => {
+				if (file instanceof TFile && this.isInMentionsFolder(file)) {
+					this.buildCache();
+				}
+			})
+		);
+		
+		this.plugin.registerEvent(
+			this.app.vault.on('rename', (file) => {
+				if (file instanceof TFile && this.isInMentionsFolder(file)) {
+					this.buildCache();
+				}
+			})
+		);
+		
+		// Rebuild when metadata changes (for alias updates)
+		this.plugin.registerEvent(
+			this.app.metadataCache.on('changed', (file) => {
+				if (this.isInMentionsFolder(file)) {
+					this.buildCache();
+				}
+			})
+		);
+		
+		// Rebuild when links change (for backlink counts)
+		this.plugin.registerEvent(
+			this.app.metadataCache.on('resolved', () => {
+				this.buildCache();
+			})
+		);
+	}
+
+	buildCache(): void {
+		this.mentionCache.clear();
+		const mentionsFolder = this.plugin.settings.mentionsFolder;
+		if (!mentionsFolder) return;
+
+		// Get mention files once
+		const files = this.app.vault.getMarkdownFiles();
+		const mentionFiles = files.filter(f => f.path.startsWith(mentionsFolder + '/'));
+
+		// Pre-compute backlinks once by inverting the data structure
+		const allLinks = this.app.metadataCache.resolvedLinks;
+		const backlinkCounts = new Map<string, number>();
+
+		// Build inverted index: target → count of sources
+		for (const sourcePath in allLinks) {
+			const targets = allLinks[sourcePath];
+			for (const targetPath in targets) {
+				backlinkCounts.set(targetPath, (backlinkCounts.get(targetPath) || 0) + 1);
+			}
+		}
+		
+		for (const file of mentionFiles) {
+			const backlinkCount = backlinkCounts.get(file.path) || 0;
+
+			// Parse aliases
+			const cache = this.app.metadataCache.getFileCache(file);
+			const aliasesField = this.plugin.settings.aliasesField;
+			const aliasesValue = cache?.frontmatter?.[aliasesField];
+			
+			let aliases: string[] = [];
+			if (Array.isArray(aliasesValue)) {
+				aliases = aliasesValue;
+			} else if (typeof aliasesValue === 'string') {
+				aliases = aliasesValue.split(',').map(a => a.trim()).filter(a => a);
+			}
+
+			this.mentionCache.set(file.path, {
+				file,
+				basename: file.basename,
+				aliases,
+				backlinkCount
+			});
+		}
+		
+		this.cacheReady = true;
+	}
+
+	private isInMentionsFolder(file: TFile): boolean {
+		const folder = this.plugin.settings.mentionsFolder;
+		return folder ? file.path.startsWith(folder + '/') : false;
 	}
 
 	onTrigger(cursor: EditorPosition, editor: Editor, file: TFile): EditorSuggestTriggerInfo | null {
@@ -36,63 +141,48 @@ export class MentionSuggest extends EditorSuggest<MentionSuggestion> {
 	}
 
 	getSuggestions(context: EditorSuggestContext): MentionSuggestion[] {
-		const query = context.query.toLowerCase();
-		const mentionsFolder = this.plugin.settings.mentionsFolder;
+		if (!this.cacheReady) return [];
 		
-		// Get all files in the mentions folder
-		const files = this.app.vault.getMarkdownFiles();
-		const mentionFiles = files.filter(file => {
-			const path = file.path;
-			// Check if file is in the mentions folder
-			if (mentionsFolder) {
-				return path.startsWith(mentionsFolder + '/');
-			}
-			return false;
-		});
-
-		// Create suggestions from existing files in the mentions folder
+		const query = context.query.toLowerCase();
 		const suggestions: MentionSuggestion[] = [];
-		for (const file of mentionFiles) {
-			const basename = file.basename;
-			const cache = this.app.metadataCache.getFileCache(file);
-			const aliasesField = this.plugin.settings.aliasesField;
-			const aliasesValue = cache?.frontmatter?.[aliasesField];
-			
-			// Parse aliases (can be array or comma-separated string)
-			let aliases: string[] = [];
-			if (Array.isArray(aliasesValue)) {
-				aliases = aliasesValue;
-			} else if (typeof aliasesValue === 'string') {
-				aliases = aliasesValue.split(',').map(a => a.trim()).filter(a => a);
-			}
-			
-			// Filter aliases that match the query
-			const matchingAliases = aliases.filter(alias => 
+		
+		// Filter cached mentions by query
+		for (const cached of this.mentionCache.values()) {
+			// Check aliases first
+			const matchingAliases = cached.aliases.filter(alias => 
 				alias.toLowerCase().includes(query)
 			);
 			
-			// If any aliases match, pick the best one (shortest match = most specific)
 			if (matchingAliases.length > 0) {
 				const bestAlias = matchingAliases.sort((a, b) => a.length - b.length)[0];
-				suggestions.push({name: basename, file, alias: bestAlias});
-			} else if (basename.toLowerCase().includes(query)) {
-				// Only show basename if no aliases match and basename matches
-				suggestions.push({name: basename, file});
+				suggestions.push({name: cached.basename, file: cached.file, alias: bestAlias});
+			} else if (cached.basename.toLowerCase().includes(query)) {
+				suggestions.push({name: cached.basename, file: cached.file});
 			}
 		}
-
-		// If the user is typing something, also suggest creating that as a new mention
+		
+		// Sort by pre-computed backlink count
+		suggestions.sort((a, b) => {
+			if (!a.file && b.file) return 1;
+			if (a.file && !b.file) return -1;
+			if (!a.file && !b.file) return 0;
+			
+			const aCached = this.mentionCache.get(a.file!.path);
+			const bCached = this.mentionCache.get(b.file!.path);
+			return (bCached?.backlinkCount || 0) - (aCached?.backlinkCount || 0);
+		});
+		
+		// Add "create new" suggestion
 		if (query.length > 0) {
 			const exactMatch = suggestions.find(s => 
 				(s.alias && s.alias.toLowerCase() === query) || 
 				(!s.alias && s.name.toLowerCase() === query)
 			);
 			if (!exactMatch) {
-				// Use original case from context.query, not lowercased query
 				suggestions.unshift({name: context.query});
 			}
 		}
-
+		
 		return suggestions;
 	}
 
