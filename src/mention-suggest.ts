@@ -51,19 +51,19 @@ export class MentionSuggest extends EditorSuggest<MentionSuggestion> {
 			})
 		);
 		
-		// Rebuild when metadata changes (for alias updates)
+		// Update single mention when metadata changes (for alias updates)
 		this.plugin.registerEvent(
 			this.app.metadataCache.on('changed', (file) => {
 				if (this.isInMentionsFolder(file)) {
-					this.buildCache();
+					this.updateSingleMention(file);
 				}
 			})
 		);
 		
-		// Rebuild when links change (for backlink counts)
+		// Update backlink counts when links change
 		this.plugin.registerEvent(
 			this.app.metadataCache.on('resolved', () => {
-				this.buildCache();
+				this.updateBacklinkCounts();
 			})
 		);
 	}
@@ -113,6 +113,46 @@ export class MentionSuggest extends EditorSuggest<MentionSuggestion> {
 		}
 		
 		this.cacheReady = true;
+	}
+
+	private updateBacklinkCounts(): void {
+		if (!this.cacheReady) return;
+
+		// Build inverted index for all backlinks
+		const allLinks = this.app.metadataCache.resolvedLinks;
+		const backlinkCounts = new Map<string, number>();
+		
+		for (const sourcePath in allLinks) {
+			const targets = allLinks[sourcePath];
+			for (const targetPath in targets) {
+				backlinkCounts.set(targetPath, (backlinkCounts.get(targetPath) || 0) + 1);
+			}
+		}
+		
+		// Update backlink counts in existing cache entries
+		for (const [path, cached] of this.mentionCache) {
+			cached.backlinkCount = backlinkCounts.get(path) || 0;
+		}
+	}
+
+	private updateSingleMention(file: TFile): void {
+		const cached = this.mentionCache.get(file.path);
+		if (!cached) return; // File not in cache (not a mention file)
+		
+		// Re-parse aliases for this file
+		const cache = this.app.metadataCache.getFileCache(file);
+		const aliasesField = this.plugin.settings.aliasesField;
+		const aliasesValue = cache?.frontmatter?.[aliasesField];
+		
+		let aliases: string[] = [];
+		if (Array.isArray(aliasesValue)) {
+			aliases = aliasesValue;
+		} else if (typeof aliasesValue === 'string') {
+			aliases = aliasesValue.split(',').map(a => a.trim()).filter(a => a);
+		}
+		
+		cached.aliases = aliases;
+		cached.basename = file.basename; // Handle renames
 	}
 
 	private isInMentionsFolder(file: TFile): boolean {
