@@ -20,8 +20,9 @@ export class MentionSuggest extends EditorSuggest<MentionSuggestion> {
 		const line = editor.getLine(cursor.line);
 		const textBeforeCursor = line.substring(0, cursor.ch);
 
-		// Check if the text ends with @ followed by optional characters
-		const match = textBeforeCursor.match(/@([a-zA-Z0-9_-]*)$/);
+		// Check if the text ends with @ followed by optional characters (max one space allowed)
+		// Matches: @, @John, @John Smith, but not @John Smith Jr (two spaces)
+		const match = textBeforeCursor.match(/@([a-zA-Z0-9_-]*(?:\s[a-zA-Z0-9_-]+)?)$/);
 		
 		if (match) {
 			return {
@@ -87,7 +88,8 @@ export class MentionSuggest extends EditorSuggest<MentionSuggestion> {
 				(!s.alias && s.name.toLowerCase() === query)
 			);
 			if (!exactMatch) {
-				suggestions.unshift({name: query});
+				// Use original case from context.query, not lowercased query
+				suggestions.unshift({name: context.query});
 			}
 		}
 
