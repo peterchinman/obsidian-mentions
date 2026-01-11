@@ -1,0 +1,10 @@
+{
+	"id": "mentions-plugin",
+	"name": "Mentions",
+	"version": "1.0.0",
+	"minAppVersion": "0.15.0",
+	"description": "Type @name to quickly create links like [[folder/name|name]] with a configurable folder.",
+	"author": "Your Name",
+	"authorUrl": "",
+	"isDesktopOnly": false
+}
