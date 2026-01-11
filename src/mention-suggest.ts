@@ -2,8 +2,9 @@ import {Editor, EditorPosition, EditorSuggest, EditorSuggestContext, EditorSugge
 import MyPlugin from "./main";
 
 interface MentionSuggestion {
-	name: string;
+	name: string;        // The file basename (e.g., "Abigail A")
 	file?: TFile;
+	alias?: string;      // The alias that was matched (e.g., "Arbis")
 }
 
 export class MentionSuggest extends EditorSuggest<MentionSuggestion> {
@@ -49,14 +50,42 @@ export class MentionSuggest extends EditorSuggest<MentionSuggestion> {
 		});
 
 		// Create suggestions from existing files in the mentions folder
-		const suggestions: MentionSuggestion[] = mentionFiles.map(file => {
-			const name = file.basename;
-			return {name, file};
-		}).filter(s => s.name.toLowerCase().includes(query));
+		const suggestions: MentionSuggestion[] = [];
+		for (const file of mentionFiles) {
+			const basename = file.basename;
+			const cache = this.app.metadataCache.getFileCache(file);
+			const aliasesField = this.plugin.settings.aliasesField;
+			const aliasesValue = cache?.frontmatter?.[aliasesField];
+			
+			// Parse aliases (can be array or comma-separated string)
+			let aliases: string[] = [];
+			if (Array.isArray(aliasesValue)) {
+				aliases = aliasesValue;
+			} else if (typeof aliasesValue === 'string') {
+				aliases = aliasesValue.split(',').map(a => a.trim()).filter(a => a);
+			}
+			
+			// Filter aliases that match the query
+			const matchingAliases = aliases.filter(alias => 
+				alias.toLowerCase().includes(query)
+			);
+			
+			// If any aliases match, pick the best one (shortest match = most specific)
+			if (matchingAliases.length > 0) {
+				const bestAlias = matchingAliases.sort((a, b) => a.length - b.length)[0];
+				suggestions.push({name: basename, file, alias: bestAlias});
+			} else if (basename.toLowerCase().includes(query)) {
+				// Only show basename if no aliases match and basename matches
+				suggestions.push({name: basename, file});
+			}
+		}
 
 		// If the user is typing something, also suggest creating that as a new mention
 		if (query.length > 0) {
-			const exactMatch = suggestions.find(s => s.name.toLowerCase() === query);
+			const exactMatch = suggestions.find(s => 
+				(s.alias && s.alias.toLowerCase() === query) || 
+				(!s.alias && s.name.toLowerCase() === query)
+			);
 			if (!exactMatch) {
 				suggestions.unshift({name: query});
 			}
@@ -66,7 +95,14 @@ export class MentionSuggest extends EditorSuggest<MentionSuggestion> {
 	}
 
 	renderSuggestion(suggestion: MentionSuggestion, el: HTMLElement): void {
-		el.createEl("div", {text: suggestion.name});
+		if (suggestion.alias) {
+			// Show "Arbis → Abigail A"
+			el.createEl("div", {text: `${suggestion.alias} → ${suggestion.name}`});
+		} else {
+			// Show just the basename
+			el.createEl("div", {text: suggestion.name});
+		}
+		
 		if (!suggestion.file) {
 			el.createEl("small", {text: " (new)", cls: "mention-new"});
 		}
@@ -81,8 +117,11 @@ export class MentionSuggest extends EditorSuggest<MentionSuggestion> {
 		const mentionsFolder = this.plugin.settings.mentionsFolder;
 		const path = mentionsFolder ? `${mentionsFolder}/${suggestion.name}` : suggestion.name;
 		
-		// Replace @name with [[folder/name|name]]
-		const replacement = `[[${path}|${suggestion.name}]]`;
+		// Use alias as display text if available, otherwise use basename
+		const displayText = suggestion.alias || suggestion.name;
+		
+		// Replace @name with [[folder/name|displayText]]
+		const replacement = `[[${path}|${displayText}]]`;
 		
 		editor.replaceRange(replacement, start, end);
 		

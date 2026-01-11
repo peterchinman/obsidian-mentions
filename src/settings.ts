@@ -3,10 +3,12 @@ import MyPlugin from "./main";
 
 export interface MyPluginSettings {
 	mentionsFolder: string;
+	aliasesField: string;
 }
 
 export const DEFAULT_SETTINGS: MyPluginSettings = {
-	mentionsFolder: 'people'
+	mentionsFolder: 'people',
+	aliasesField: 'accepted-names'
 }
 
 export class MentionsSettingTab extends PluginSettingTab {
@@ -32,6 +34,17 @@ export class MentionsSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.mentionsFolder)
 				.onChange(async (value) => {
 					this.plugin.settings.mentionsFolder = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Aliases field name')
+			.setDesc('The frontmatter field name for accepted names/aliases (e.g., "accepted-names" allows you to define multiple names for each person)')
+			.addText(text => text
+				.setPlaceholder('accepted-names')
+				.setValue(this.plugin.settings.aliasesField)
+				.onChange(async (value) => {
+					this.plugin.settings.aliasesField = value;
 					await this.plugin.saveSettings();
 				}));
 	}
