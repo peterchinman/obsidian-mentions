@@ -75,6 +75,18 @@ Go to **Settings → Mentions** to configure:
 3. Run `npm run dev` for development with hot reload
 4. Run `npm run build` for production build
 
+### Testing
+
+The plugin includes a comprehensive test suite:
+
+```bash
+npm test                 # Run all tests
+npm run test:watch      # Run tests in watch mode
+npm run test:coverage   # Run tests with coverage report
+```
+
+See [tests/README.md](tests/README.md) for more information about the test suite.
+
 ## Examples
 
 ### Basic Examples
