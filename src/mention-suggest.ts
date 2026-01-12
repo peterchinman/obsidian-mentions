@@ -24,9 +24,7 @@ export class MentionSuggest extends EditorSuggest<MentionSuggestion> {
 		this.plugin = plugin;
 		
 		// Delay initial cache build to allow metadata cache to populate
-		console.log('[Mentions] Scheduling initial cache build...');
 		setTimeout(() => {
-			console.log('[Mentions] Building initial cache after delay');
 			this.buildCache();
 		}, 1000);
 		
@@ -75,15 +73,11 @@ export class MentionSuggest extends EditorSuggest<MentionSuggestion> {
 	buildCache(): void {
 		this.mentionCache.clear();
 		const mentionsFolder = this.plugin.settings.mentionsFolder;
-		if (!mentionsFolder) {
-			console.log('[Mentions] No mentions folder configured');
-			return;
-		}
+		if (!mentionsFolder) return;
 
 		// Get mention files once
 		const files = this.app.vault.getMarkdownFiles();
 		const mentionFiles = files.filter(f => f.path.startsWith(mentionsFolder + '/'));
-		console.log(`[Mentions] Building cache for ${mentionFiles.length} files in ${mentionsFolder}`);
 
 		// Pre-compute backlinks once by inverting the data structure
 		const allLinks = this.app.metadataCache.resolvedLinks;
@@ -105,18 +99,6 @@ export class MentionSuggest extends EditorSuggest<MentionSuggestion> {
 			const aliasesField = this.plugin.settings.aliasesField;
 			const aliasesValue = cache?.frontmatter?.[aliasesField];
 			
-			// Debug for Turlington
-			if (file.basename.includes('Turlington')) {
-				console.log(`[Mentions] Reading ${file.basename}:`, {
-					hasCache: !!cache,
-					hasFrontmatter: !!cache?.frontmatter,
-					aliasesField,
-					aliasesValue,
-					frontmatterKeys: cache?.frontmatter ? Object.keys(cache.frontmatter) : [],
-					fullFrontmatter: cache?.frontmatter
-				});
-			}
-			
 			let aliases: string[] = [];
 			if (Array.isArray(aliasesValue)) {
 				aliases = aliasesValue;
@@ -130,13 +112,8 @@ export class MentionSuggest extends EditorSuggest<MentionSuggestion> {
 				aliases,
 				backlinkCount
 			});
-			
-			if (aliases.length > 0) {
-				console.log(`[Mentions] Cached "${file.basename}" with ${aliases.length} aliases:`, aliases);
-			}
 		}
 		
-		console.log(`[Mentions] Cache built with ${this.mentionCache.size} entries`);
 		this.cacheReady = true;
 	}
 
@@ -206,27 +183,9 @@ export class MentionSuggest extends EditorSuggest<MentionSuggestion> {
 	}
 
 	getSuggestions(context: EditorSuggestContext): MentionSuggestion[] {
-		if (!this.cacheReady) {
-			console.log('[Mentions] Cache not ready');
-			return [];
-		}
+		if (!this.cacheReady) return [];
 		
 		const query = context.query.toLowerCase();
-		console.log(`[Mentions] Getting suggestions for query: "${query}"`);
-		console.log(`[Mentions] Cache has ${this.mentionCache.size} entries`);
-		
-		// Debug: show what's in cache for John Turlington
-		for (const [path, cached] of this.mentionCache) {
-			if (cached.basename.includes('Turlington')) {
-				console.log(`[Mentions] Cache entry for Turlington:`, {
-					path,
-					basename: cached.basename,
-					aliases: cached.aliases,
-					aliasCount: cached.aliases.length
-				});
-			}
-		}
-		
 		const suggestions: MentionSuggestion[] = [];
 		
 		// Filter cached mentions by query
@@ -238,7 +197,6 @@ export class MentionSuggest extends EditorSuggest<MentionSuggestion> {
 			
 			if (matchingAliases.length > 0) {
 				const bestAlias = matchingAliases.sort((a, b) => a.length - b.length)[0];
-				console.log(`[Mentions] Found alias match: "${bestAlias}" → "${cached.basename}"`);
 				suggestions.push({name: cached.basename, file: cached.file, alias: bestAlias});
 			} else if (cached.basename.toLowerCase().includes(query)) {
 				suggestions.push({name: cached.basename, file: cached.file});
@@ -267,12 +225,10 @@ export class MentionSuggest extends EditorSuggest<MentionSuggestion> {
 			}
 		}
 		
-		console.log(`[Mentions] Returning ${suggestions.length} suggestions:`, suggestions.map(s => ({name: s.name, alias: s.alias})));
 		return suggestions;
 	}
 
 	renderSuggestion(suggestion: MentionSuggestion, el: HTMLElement): void {
-		console.log(`[Mentions] Rendering:`, {name: suggestion.name, alias: suggestion.alias, hasFile: !!suggestion.file});
 		if (suggestion.alias) {
 			// Show "Arbis → Abigail A"
 			el.createEl("div", {text: `${suggestion.alias} → ${suggestion.name}`});
